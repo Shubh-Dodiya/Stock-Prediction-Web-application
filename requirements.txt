@@ -3,4 +3,5 @@ yfinance
 prophet
 plotly
 pandas
+streamlit-extras
 numpy
