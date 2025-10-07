@@ -169,7 +169,7 @@ if data.empty:
 # ----------------------
 # UI and plotting
 # ----------------------
-st.title("📈 Stock Prediction — Robust Edition")
+st.title("📈 Stock Prediction")
 st.subheader(f"Data for {symbol.upper()} ({len(data)} rows)")
 
 st.markdown("**Preview (last 5 rows):**")
