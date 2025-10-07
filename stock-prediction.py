@@ -9,7 +9,7 @@ import numpy as np
 import io, math
 
 st.set_page_config(
-    page_title="📈 Stock Prediction (Robust)",
+    page_title="Stock Prediction",
     page_icon="💹",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -123,7 +123,7 @@ def load_yf_data_normalized(symbol, start, end, interval="1d"):
 # ----------------------
 with st.sidebar:
     st.header("Classic App Settings")
-    symbol = st.text_input("Ticker Symbol (e.g. AAPL)", value="AAPL")
+    symbol = st.selectbox("Ticker Symbol (e.g. AAPL)", value="AAPL")
     start_date = st.date_input("Start Date", value=date(2015, 1, 1))
     end_date = st.date_input("End Date", value=date.today())
     interval = st.selectbox("Interval", ["1d", "1wk", "1mo"], index=0)
