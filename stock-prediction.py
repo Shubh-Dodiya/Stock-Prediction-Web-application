@@ -123,7 +123,7 @@ def load_yf_data_normalized(symbol, start, end, interval="1d"):
 # ----------------------
 with st.sidebar:
     st.header("Classic App Settings")
-    symbol = st.selectbox("Ticker Symbol (e.g. AAPL)", value="AAPL")
+    symbol = st.selectbox("Ticker Symbol (e.g. AAPL)", ["AAPL"], index=0)
     start_date = st.date_input("Start Date", value=date(2015, 1, 1))
     end_date = st.date_input("End Date", value=date.today())
     interval = st.selectbox("Interval", ["1d", "1wk", "1mo"], index=0)
