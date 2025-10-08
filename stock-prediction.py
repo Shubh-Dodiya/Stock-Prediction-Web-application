@@ -1,4 +1,4 @@
-# stock-prediction_fixed.py
+# stock-prediction-multi.py — Premium Edition
 import streamlit as st
 from datetime import date
 import yfinance as yf
@@ -8,82 +8,45 @@ import pandas as pd
 import numpy as np
 import io, math
 
+# -------------------------------
+# Page Configuration
+# -------------------------------
 st.set_page_config(
-    page_title="Stock Prediction",
+    page_title="📈 Stock Prediction Dashboard",
     page_icon="💹",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-# ----------------------
-# Helpers
-# ----------------------
+# -------------------------------
+# Helper Functions
+# -------------------------------
 def flatten_multiindex_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Flattens multi-index columns returned by yfinance."""
     if isinstance(df.columns, pd.MultiIndex):
-        # join levels sensibly (skip empty strings)
-        new_cols = []
-        for col in df.columns:
-            # col might be tuple like ('AAPL', 'Close') or ('', 'Close')
-            parts = [str(p) for p in col if (p is not None and str(p) != "")]
-            new_cols.append("_".join(parts) if parts else "")
-        df = df.copy()
-        df.columns = new_cols
+        df.columns = ["_".join([str(c) for c in tup if c]).strip() for tup in df.columns]
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
 def find_and_rename_date_close(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+    """Finds and renames Date and Close columns automatically."""
     df = flatten_multiindex_cols(df)
-
-    # 1) Try find obvious date column names
-    date_candidates = [c for c in df.columns if any(k in c.lower() for k in ("date", "time", "datetime", "timestamp", "index"))]
-    date_col = date_candidates[0] if date_candidates else None
-
-    # 2) If not found, look for datetime dtype
-    if date_col is None:
+    date_col = next((c for c in df.columns if "date" in c.lower() or "time" in c.lower()), None)
+    if not date_col:
         for c in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df[c]):
                 date_col = c
                 break
-
-    # 3) If still not found, attempt parsing each column and pick best
-    if date_col is None:
-        best = None
-        best_nonnull = -1
-        for c in df.columns:
-            # skip obviously numeric/price columns
-            if pd.api.types.is_numeric_dtype(df[c]):
-                continue
-            parsed = pd.to_datetime(df[c], errors="coerce")
-            nonnull = int(parsed.notna().sum())
-            if nonnull > best_nonnull:
-                best_nonnull = nonnull
-                best = c
-        # require at least some parsed dates
-        if best_nonnull > 0:
-            date_col = best
-
-    # Apply date parsing if we found a candidate
     if date_col:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
         df.rename(columns={date_col: "Date"}, inplace=True)
 
-    # ----------------
-    # Find Close column
-    close_candidates = [c for c in df.columns if "close" in c.lower() or "adj close" in c.lower() or "adjclose" in c.lower()]
-    close_col = close_candidates[0] if close_candidates else None
-
-    # If not found, pick the last numeric column (often Close)
-    if close_col is None:
-        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-        # exclude volume if present
-        numeric_cols = [c for c in numeric_cols if "vol" not in c.lower()]
+    close_col = next((c for c in df.columns if "close" in c.lower()), None)
+    if not close_col:
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and "vol" not in c.lower()]
         if numeric_cols:
-            close_col = numeric_cols[-1]  # fallback: last numeric column
-
+            close_col = numeric_cols[-1]
     if close_col:
         df.rename(columns={close_col: "Close"}, inplace=True)
-
     return df
 
 def safe_to_numeric(series):
@@ -92,127 +55,117 @@ def safe_to_numeric(series):
     except Exception:
         return pd.Series(dtype=float)
 
-def compute_metrics(y_true, y_pred):
-    y_true = np.array(y_true).astype(float)
-    y_pred = np.array(y_pred).astype(float)
-    mask = ~np.isnan(y_true) & ~np.isnan(y_pred)
-    if mask.sum() == 0:
-        return {"mae": None, "rmse": None}
-    mae = np.mean(np.abs(y_true[mask] - y_pred[mask]))
-    rmse = math.sqrt(np.mean((y_true[mask] - y_pred[mask]) ** 2))
-    return {"mae": mae, "rmse": rmse}
-
-# ----------------------
-# Data loader with normalization
-# ----------------------
 @st.cache_data(show_spinner=False)
-def load_yf_data_normalized(symbol, start, end, interval="1d"):
+def load_yf_data(symbol, start, end, interval="1d"):
     df = yf.download(symbol, start=start, end=end, interval=interval, progress=False)
-    if df is None:
+    if df is None or df.empty:
         return pd.DataFrame()
-    if df.empty and hasattr(df, "empty"):
-        return pd.DataFrame()
-    # If index is datetime-like, reset it so we get a column
     df = df.reset_index()
-    # Normalize column names & flatten multiindex
     df = find_and_rename_date_close(df)
     return df
 
-# ----------------------
+# -------------------------------
 # Sidebar Controls
-# ----------------------
+# -------------------------------
 with st.sidebar:
-    st.header("Classic App Settings")
-    symbol = st.selectbox("Ticker Symbol (e.g. AAPL)", ["AAPL"], index=0)
-    start_date = st.date_input("Start Date", value=date(2015, 1, 1))
-    end_date = st.date_input("End Date", value=date.today())
-    interval = st.selectbox("Interval", ["1d", "1wk", "1mo"], index=0)
-    forecast_days = st.slider("Forecast Days (horizon)", 30, 1095, 365)
-    yearly_seasonality = st.checkbox("Enable yearly seasonality", value=True)
-    dark_mode = st.checkbox("Dark Mode (classic look)", value=True)
+    st.markdown("## ⚙️ Settings")
 
-# ----------------------
-# Load data
-# ----------------------
-data = load_yf_data_normalized(symbol.upper(), start_date, end_date, interval=interval)
+    stock_choice = st.selectbox(
+        "Select a Stock",
+        ["GOOGL", "AAPL", "AMZN", "TSLA", "MSFT", "Other (Manual Input)"],
+        index=0
+    )
 
-# If still empty or missing columns - show helpful diagnostic
+    if stock_choice == "Other (Manual Input)":
+        symbol = st.text_input("Enter Custom Symbol (e.g., INFY.NS)", value="")
+    else:
+        symbol = stock_choice
+
+    start_date = st.date_input("📅 Start Date", value=date(2015, 1, 1))
+    end_date = st.date_input("📅 End Date", value=date.today())
+    interval = st.selectbox("📊 Interval", ["1d", "1wk", "1mo"], index=0)
+    forecast_days = st.slider("🔮 Forecast Days", 30, 1095, 365)
+    yearly_seasonality = st.checkbox("Enable Yearly Seasonality", True)
+    dark_mode = st.checkbox("Dark Mode", True)
+
+# -------------------------------
+# Data Loading
+# -------------------------------
+if not symbol:
+    st.warning("Please select or enter a stock symbol to begin.")
+    st.stop()
+
+data = load_yf_data(symbol.upper(), start_date, end_date, interval)
 if data.empty:
-    st.error("No data returned from yfinance for this symbol/period. Try another symbol or date range.")
+    st.error("⚠️ No data found. Try another symbol or time range.")
     st.stop()
 
-# Check for Date column
-if "Date" not in data.columns:
-    # helpful debug output: show columns and first few rows to inspect
-    st.error("Missing 'Date' column after normalization.")
-    st.write("Columns found:", list(data.columns))
-    st.write("Preview of first rows:")
-    st.dataframe(data.head(10))
+if "Date" not in data.columns or "Close" not in data.columns:
+    st.error("Data missing required columns (Date/Close).")
+    st.dataframe(data.head())
     st.stop()
 
-# Check for Close column
-if "Close" not in data.columns:
-    st.error("Missing 'Close' column after normalization.")
-    st.write("Columns found:", list(data.columns))
-    st.write("Preview of first rows:")
-    st.dataframe(data.head(10))
-    st.stop()
-
-# Clean and sort
 data["Close"] = safe_to_numeric(data["Close"])
 data = data.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
 
-if data.empty:
-    st.error("No valid rows after cleaning Date/Close.")
-    st.stop()
+# -------------------------------
+# Tabs: Historical | Forecast
+# -------------------------------
+st.title("📈 Stock Prediction Dashboard")
+tab1, tab2 = st.tabs(["📊 Historical Data", "🔮 Forecast Results"])
 
-# ----------------------
-# UI and plotting
-# ----------------------
-st.title("📈 Stock Prediction")
-st.subheader(f"Data for {symbol.upper()} ({len(data)} rows)")
+# -------------------------------
+# Historical Tab
+# -------------------------------
+with tab1:
+    st.subheader(f"Data for {symbol.upper()} ({len(data)} rows)")
+    st.markdown("**Preview (last 5 rows):**")
+    st.dataframe(data.tail().reset_index(drop=True), use_container_width=True)
 
-st.markdown("**Preview (last 5 rows):**")
-st.dataframe(data.tail())
+    fig_hist = go.Figure()
+    fig_hist.add_trace(go.Scatter(
+        x=data["Date"], y=data["Close"], 
+        name="Close", mode="lines", line=dict(width=2.2)
+    ))
+    fig_hist.update_layout(
+        title=f"{symbol.upper()} Close Price",
+        xaxis_title="Date",
+        yaxis_title="Price (USD)",
+        template="plotly_dark" if dark_mode else "plotly_white",
+        xaxis_rangeslider_visible=True,
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=data["Date"], y=data["Close"], name="Close", mode="lines"))
-fig.update_layout(
-    title=f"{symbol.upper()} Close Price",
-    xaxis_title="Date",
-    yaxis_title="Price",
-    template="plotly_dark" if dark_mode else "plotly_white",
-    xaxis_rangeslider_visible=True,
-)
-st.plotly_chart(fig, use_container_width=True)
+# -------------------------------
+# Forecast Tab
+# -------------------------------
+with tab2:
+    df_prophet = pd.DataFrame({"ds": pd.to_datetime(data["Date"]), "y": data["Close"].astype(float)}).dropna()
 
-# ----------------------
-# Prophet forecasting
-# ----------------------
-df_prophet = pd.DataFrame({"ds": pd.to_datetime(data["Date"]), "y": data["Close"].astype(float)})
-df_prophet = df_prophet.dropna().reset_index(drop=True)
+    with st.spinner("⏳ Training Prophet model..."):
+        try:
+            model = Prophet(yearly_seasonality=yearly_seasonality)
+            model.fit(df_prophet)
+        except Exception as e:
+            st.error(f"Model training failed: {e}")
+            st.stop()
 
-st.subheader("🔮 Forecast")
-# train on full history for demo
-try:
-    model = Prophet(yearly_seasonality=yearly_seasonality)
-    model.fit(df_prophet)
-except Exception as e:
-    st.error(f"Model training failed: {e}")
-    st.stop()
+    future = model.make_future_dataframe(periods=forecast_days)
+    forecast = model.predict(future)
 
-future = model.make_future_dataframe(periods=forecast_days)
-forecast = model.predict(future)
+    st.markdown("**Forecast Preview (last 5 rows):**")
+    st.dataframe(forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail().reset_index(drop=True),
+                 use_container_width=True)
 
-st.markdown("**Forecast preview:**")
-st.dataframe(forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail())
-
-# interactive forecast plot
-fc_plot = go.Figure()
-fc_plot.add_trace(go.Scatter(x=df_prophet["ds"], y=df_prophet["y"], name="Historical", mode="lines"))
-fc_plot.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], name="Forecast", mode="lines"))
-fc_plot.add_trace(
-    go.Scatter(
+    fig_fore = go.Figure()
+    fig_fore.add_trace(go.Scatter(
+        x=df_prophet["ds"], y=df_prophet["y"], name="Historical", mode="lines"
+    ))
+    fig_fore.add_trace(go.Scatter(
+        x=forecast["ds"], y=forecast["yhat"], name="Forecast", mode="lines"
+    ))
+    fig_fore.add_trace(go.Scatter(
         x=pd.concat([forecast["ds"], forecast["ds"][::-1]]),
         y=pd.concat([forecast["yhat_upper"], forecast["yhat_lower"][::-1]]),
         fill="toself",
@@ -221,14 +174,22 @@ fc_plot.add_trace(
         hoverinfo="skip",
         showlegend=True,
         name="Confidence Interval",
+    ))
+    fig_fore.update_layout(
+        title=f"{symbol.upper()} — Forecast ({forecast_days} Days)",
+        template="plotly_dark" if dark_mode else "plotly_white",
+        margin=dict(l=40, r=40, t=60, b=40),
     )
-)
-fc_plot.update_layout(template="plotly_dark" if dark_mode else "plotly_white", title=f"{symbol.upper()} Forecast")
-st.plotly_chart(fc_plot, use_container_width=True)
+    st.plotly_chart(fig_fore, use_container_width=True)
 
-# allow download
-csv_buf = io.StringIO()
-forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].to_csv(csv_buf, index=False)
-st.download_button("Download forecast CSV", data=csv_buf.getvalue().encode(), file_name=f"{symbol}_forecast.csv")
+    # Download section
+    st.markdown("### 💾 Download Forecast Data")
+    csv_buf = io.StringIO()
+    forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].to_csv(csv_buf, index=False)
+    st.download_button(
+        label="📥 Download CSV",
+        data=csv_buf.getvalue().encode(),
+        file_name=f"{symbol}_forecast.csv"
+    )
 
-st.success("Done. If you still see 'Missing Date' message, inspect the table shown above — it helps find which column to treat as date.")
+st.success("✅ Forecast completed successfully. Enjoy your data")
