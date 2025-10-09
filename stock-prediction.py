@@ -12,7 +12,7 @@ import io, math
 # Page Configuration
 # -------------------------------
 st.set_page_config(
-    page_title="📈 Stock Prediction Dashboard",
+    page_title="Stock Prediction Dashboard",
     page_icon="💹",
     layout="wide",
 )
@@ -72,7 +72,7 @@ with st.sidebar:
 
     stock_choice = st.selectbox(
         "Select a Stock",
-        ["GOOGL", "AAPL", "AMZN", "TSLA", "MSFT", "Other (Manual Input)"],
+        ["GOOGL", "AAPL", "AMZN", "TSLA", "MSFT"],
         index=0
     )
 
